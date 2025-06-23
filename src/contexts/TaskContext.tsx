@@ -84,6 +84,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           if (result.data && Array.isArray(result.data)) {
             console.log('Loaded tasks from Supabase:', result.data.length, 'tasks');
             setTasks(result.data);
+            const processed = processRecurringOnLoad(result.data);
+            setTasks(processed);
           } else {
             console.warn('Invalid task data from Supabase, keeping current tasks');
           }
@@ -327,6 +329,50 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
   
   return <TaskContext.Provider value={value}>{children}</TaskContext.Provider>;
+};
+// 1) サーバーからロードした直後に呼び出す関数
+const processRecurringOnLoad = (rawTasks: Task[]): Task[] => {
+  const now = new Date();
+
+  return rawTasks.map(task => {
+    if (!task.recurring) return task;
+
+    const { nextDue, type, interval, lastCompleted } = task.recurring;
+    // nextDue が「昨日以前」であれば、未完了状態にリセットして nextDue を再計算
+    if (nextDue && now >= new Date(nextDue)) {
+      // ベースにする日付は lastCompleted があればそこから、なければ today から
+      const base = lastCompleted ? new Date(lastCompleted) : now;
+      const newNextDue = new Date(base);
+
+      switch (type) {
+        case 'daily':
+          newNextDue.setDate(newNextDue.getDate() + interval);
+          break;
+        case 'weekly':
+          newNextDue.setDate(newNextDue.getDate() + interval * 7);
+          break;
+        case 'monthly':
+          newNextDue.setMonth(newNextDue.getMonth() + interval);
+          break;
+      }
+
+      return {
+        ...task,
+        // 完了済みフラグをリセット
+        completed: false,
+        completedAt: undefined,
+        // recurring 情報を更新
+        recurring: {
+          ...task.recurring,
+          lastCompleted: undefined,              // 前回完了情報はクリア
+          nextDue: newNextDue,                   // 新しい期日
+          completedRepetitions: 0,               // 繰り返し回数もリセット
+        }
+      };
+    }
+
+    return task;
+  });
 };
 
 export const useTasks = (): TaskContextType => {
