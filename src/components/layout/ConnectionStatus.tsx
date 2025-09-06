@@ -1,15 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Wifi, WifiOff, AlertCircle, CheckCircle } from 'lucide-react';
-import { checkSupabaseHealth } from '../../utils/supabaseStorage';
-import { useAuth } from '../../contexts/AuthContext';
+import { Wifi, WifiOff } from 'lucide-react';
 
 const ConnectionStatus: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [supabaseHealthy, setSupabaseHealthy] = useState<boolean | null>(null);
   const [showStatus, setShowStatus] = useState(false);
-  const [isChecking, setIsChecking] = useState(false);
-  const [lastCheckTime, setLastCheckTime] = useState<number>(0);
-  const { user } = useAuth();
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -24,52 +18,7 @@ const ConnectionStatus: React.FC = () => {
     };
   }, []);
 
-  useEffect(() => {
-    const checkHealth = async () => {
-      // Prevent too frequent checks
-      const now = Date.now();
-      if (now - lastCheckTime < 30000) { // 30 seconds minimum between checks
-        return;
-      }
-      
-      if (user && isOnline && !isChecking) {
-        setIsChecking(true);
-        setLastCheckTime(now);
-        
-        try {
-          console.log('Performing health check...');
-          const result = await checkSupabaseHealth();
-          setSupabaseHealthy(result.success);
-          
-          if (!result.success) {
-            console.error('Health check failed:', result.error);
-          } else {
-            console.log('Health check passed');
-          }
-        } catch (error) {
-          console.error('Health check error:', error);
-          setSupabaseHealthy(false);
-        } finally {
-          setIsChecking(false);
-        }
-      } else if (!user || !isOnline) {
-        setSupabaseHealthy(null);
-      }
-    };
-
-    // Initial check with delay to avoid conflicts with login
-    const timeoutId = setTimeout(() => {
-      checkHealth();
-    }, 2000);
-    
-    // Periodic check every 60 seconds if user is authenticated and online
-    const interval = user && isOnline ? setInterval(checkHealth, 60000) : null;
-    
-    return () => {
-      clearTimeout(timeoutId);
-      if (interval) clearInterval(interval);
-    };
-  }, [user, isOnline, isChecking, lastCheckTime]);
+  // Only track online/offline
 
   // Only show status for offline - don't show sync issues
   useEffect(() => {

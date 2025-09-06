@@ -1,9 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Task } from '../types';
 import { PRIORITY_POINTS } from '../utils/constants';
-import { syncTasksToSupabase, loadTasksFromSupabase } from '../utils/supabaseStorage';
 import { useGame } from './GameContext';
-import { useAuth } from './AuthContext';
 
 interface TaskContextType {
   tasks: Task[];
@@ -25,13 +23,64 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [hasInitialized, setHasInitialized] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const { completeTask: updateGameProgress, undoTask: revertGameProgress } = useGame();
-  const { user } = useAuth();
   
-  // Initialize tasks on first load
+  const LOCAL_STORAGE_KEY = 'taskquest.tasks.v1';
+  
+  const serializeTasks = (tasksToSave: Task[]) => {
+    return JSON.stringify(
+      tasksToSave.map(t => ({
+        ...t,
+        createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : undefined,
+        completedAt: t.completedAt ? new Date(t.completedAt).toISOString() : undefined,
+        recurring: t.recurring
+          ? {
+              ...t.recurring,
+              lastCompleted: t.recurring.lastCompleted ? new Date(t.recurring.lastCompleted).toISOString() : undefined,
+              nextDue: t.recurring.nextDue ? new Date(t.recurring.nextDue).toISOString() : undefined,
+              endDate: t.recurring.endDate ? new Date(t.recurring.endDate).toISOString() : undefined,
+            }
+          : undefined,
+      }))
+    );
+  };
+  
+  const deserializeTasks = (raw: string | null): Task[] => {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((t: any) => ({
+        id: String(t.id),
+        title: String(t.title || ''),
+        description: t.description ? String(t.description) : undefined,
+        completed: Boolean(t.completed),
+        createdAt: t.createdAt ? new Date(t.createdAt) : new Date(),
+        completedAt: t.completedAt ? new Date(t.completedAt) : undefined,
+        points: Number(t.points) || 0,
+        category: String(t.category || 'general'),
+        priority: t.priority as Task['priority'] || 'medium',
+        recurring: t.recurring
+          ? {
+              type: t.recurring.type,
+              interval: Number(t.recurring.interval) || 1,
+              lastCompleted: t.recurring.lastCompleted ? new Date(t.recurring.lastCompleted) : undefined,
+              nextDue: t.recurring.nextDue ? new Date(t.recurring.nextDue) : undefined,
+              totalRepetitions: t.recurring.totalRepetitions ? Number(t.recurring.totalRepetitions) : undefined,
+              completedRepetitions: Number(t.recurring.completedRepetitions) || 0,
+              endDate: t.recurring.endDate ? new Date(t.recurring.endDate) : undefined,
+            }
+          : undefined,
+      })) as Task[];
+    } catch (e) {
+      console.warn('Failed to parse tasks from localStorage:', e);
+      return [];
+    }
+  };
+  
+  // Initialize tasks on first load from localStorage
   useEffect(() => {
     const initializeTasks = async () => {
       if (hasInitialized) return;
@@ -41,10 +90,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setError(null);
       
       try {
-        // Start with empty tasks array - data will come from Supabase
-        console.log('Starting with empty tasks array - waiting for Supabase data');
-        setTasks([]);
-        
+        const stored = deserializeTasks(localStorage.getItem(LOCAL_STORAGE_KEY));
+        const processed = processRecurringOnLoad(stored);
+        setTasks(processed);
         setHasInitialized(true);
       } catch (err) {
         console.error('Error initializing tasks:', err);
@@ -57,92 +105,16 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
     initializeTasks();
   }, [hasInitialized]);
-  
-  // Load user-specific tasks when user changes
+
+  // Persist tasks to localStorage whenever tasks change
   useEffect(() => {
-    let isMounted = true;
-    
-    const loadUserTasks = async () => {
-      if (!hasInitialized) return; // Wait for initialization
-      
-      if (user && user.id !== currentUserId) {
-        console.log('Loading tasks for user:', user.id);
-        setSyncing(true);
-        setError(null);
-        
-        // Add delay to prevent connection conflicts after login
-        await new Promise(resolve => setTimeout(resolve, 800));
-        
-        if (!isMounted) return;
-        
-        try {
-          const result = await loadTasksFromSupabase(user.id);
-          
-          if (!isMounted) return;
-          
-          // Only update if we got valid data
-          if (result.data && Array.isArray(result.data)) {
-            console.log('Loaded tasks from Supabase:', result.data.length, 'tasks');
-            setTasks(result.data);
-            const processed = processRecurringOnLoad(result.data);
-            setTasks(processed);
-          } else {
-            console.warn('Invalid task data from Supabase, keeping current tasks');
-          }
-          
-          setCurrentUserId(user.id);
-          setIsInitialized(true);
-        } catch (error) {
-          console.error('Failed to load tasks from Supabase:', error);
-          setError('Failed to sync tasks from server.');
-          
-          if (isMounted) {
-            // Keep existing tasks if Supabase fails
-            setCurrentUserId(user.id);
-            setIsInitialized(true);
-          }
-        } finally {
-          if (isMounted) {
-            setSyncing(false);
-          }
-        }
-      } else if (!user && currentUserId) {
-        console.log('User logged out, clearing tasks');
-        // Clear tasks when user logs out
-        setTasks([]);
-        setCurrentUserId(null);
-        setIsInitialized(false);
-        setSyncing(false);
-      }
-    };
-    
-    loadUserTasks();
-    
-    return () => {
-      isMounted = false;
-    };
-  }, [user, currentUserId, hasInitialized]);
-  
-  // Sync tasks to Supabase when they change (if user is authenticated)
-  useEffect(() => {
-    if (!hasInitialized || loading || !isInitialized) return;
-    
-    // Sync to Supabase if user is authenticated
-    if (user && currentUserId === user.id && !syncing) {
-      // Add delay to prevent rapid sync calls
-      const timeoutId = setTimeout(async () => {
-        try {
-          console.log('Syncing tasks to Supabase:', tasks.length, 'tasks');
-          await syncTasksToSupabase(tasks, user.id);
-        } catch (err) {
-          console.error('Failed to sync tasks to Supabase:', err);
-          // Don't show error to user for sync failures
-        }
-      }, 1000);
-      
-      return () => clearTimeout(timeoutId);
+    if (!hasInitialized) return;
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, serializeTasks(tasks));
+    } catch (e) {
+      console.warn('Failed to save tasks to localStorage:', e);
     }
-  }, [tasks, user, currentUserId, hasInitialized, loading, syncing, isInitialized]);
+  }, [tasks, hasInitialized]);
   
   const addTask = (taskData: Partial<Task>) => {
     try {

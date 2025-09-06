@@ -9,13 +9,6 @@ import {
   pointsForNextLevel,
   levelProgressPercentage
 } from '../utils/constants';
-import { 
-  syncGameStatsToSupabase, 
-  loadGameStatsFromSupabase,
-  syncAchievementsToSupabase,
-  loadAchievementsFromSupabase
-} from '../utils/supabaseStorage';
-import { useAuth } from './AuthContext';
 
 interface GameContextType {
   stats: GameStats;
@@ -142,10 +135,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [stats, setStats] = useState<GameStats>(getDefaultStats());
   const [achievements, setAchievements] = useState<Achievement[]>(DEFAULT_ACHIEVEMENTS);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [syncing, setSyncing] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
-  const { user } = useAuth();
+  const [syncing] = useState(false);
   
   // Calculate points needed for next level
   const pointsToNextLevel = pointsForNextLevel(stats.level, stats.currentPoints);
@@ -153,110 +143,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Calculate level progress percentage
   const levelProgress = levelProgressPercentage(stats.level, stats.currentPoints);
   
-  // Reset data when user changes
-  useEffect(() => {
-    let isMounted = true;
-    
-    const loadUserData = async () => {
-      if (user && user.id !== currentUserId) {
-        console.log('Loading game data for user:', user.id);
-        setSyncing(true);
-        
-        // Add delay to prevent connection conflicts after login
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        if (!isMounted) return;
-        
-        try {
-          // Load user-specific data from Supabase with staggered requests
-          const supabaseStats = await loadGameStatsFromSupabase(user.id);
-          
-          if (!isMounted) return;
-          
-          // Add delay between requests
-          await new Promise(resolve => setTimeout(resolve, 200));
-          
-          const supabaseAchievements = await loadAchievementsFromSupabase(user.id);
-          
-          if (!isMounted) return;
-          
-          if (supabaseStats.data) {
-            console.log('Loaded stats from Supabase:', supabaseStats.data);
-            setStats(supabaseStats.data);
-          } else {
-            console.log('No stats found, initializing new user');
-            // Initialize new user with default stats
-            const defaultStats = getDefaultStats();
-            setStats(defaultStats);
-          }
-          
-          if (supabaseAchievements.data) {
-            console.log('Loaded achievements from Supabase:', supabaseAchievements.data);
-            setAchievements(supabaseAchievements.data);
-          } else {
-            console.log('No achievements found, initializing new user');
-            // Initialize new user with default achievements
-            setAchievements(DEFAULT_ACHIEVEMENTS);
-          }
-          
-          setCurrentUserId(user.id);
-          setIsInitialized(true);
-        } catch (error) {
-          console.error('Failed to load user data from Supabase:', error);
-          if (isMounted) {
-            // Fallback to default data for new user
-            setStats(getDefaultStats());
-            setAchievements(DEFAULT_ACHIEVEMENTS);
-            setCurrentUserId(user.id);
-            setIsInitialized(true);
-          }
-        } finally {
-          if (isMounted) {
-            setSyncing(false);
-          }
-        }
-      } else if (!user && currentUserId) {
-        console.log('User logged out, resetting to default data');
-        // User logged out, reset to default data
-        setStats(getDefaultStats());
-        setAchievements(DEFAULT_ACHIEVEMENTS);
-        setCurrentUserId(null);
-        setIsInitialized(false);
-        setSyncing(false);
-      }
-    };
-    
-    loadUserData();
-    
-    return () => {
-      isMounted = false;
-    };
-  }, [user, currentUserId]);
-  
-  // Sync data to Supabase when it changes (if user is authenticated)
-  useEffect(() => {
-    if (user && currentUserId === user.id && isInitialized) {
-      // Add delay to prevent rapid sync calls
-      const timeoutId = setTimeout(() => {
-        console.log('Syncing stats to Supabase:', stats);
-        syncGameStatsToSupabase(stats, user.id);
-      }, 1000);
-      
-      return () => clearTimeout(timeoutId);
-    }
-  }, [stats, user, currentUserId, isInitialized]);
-  
-  useEffect(() => {
-    if (user && currentUserId === user.id && isInitialized) {
-      // Add delay to prevent rapid sync calls
-      const timeoutId = setTimeout(() => {
-        console.log('Syncing achievements to Supabase:', achievements);
-        syncAchievementsToSupabase(achievements, user.id);
-      }, 1000);
-      
-      return () => clearTimeout(timeoutId);
-    }
-  }, [achievements, user, currentUserId, isInitialized]);
+  // No remote sync; keep in-memory only
   
   // Auto-dismiss notifications after appropriate time
   useEffect(() => {

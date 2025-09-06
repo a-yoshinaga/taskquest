@@ -24,6 +24,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <Header />
+      {/* Maintenance Banner */}
+      <div className="bg-yellow-100 border-b border-yellow-300">
+        <div className="container mx-auto px-4 py-3 text-center text-yellow-900 text-sm">
+          現在メンテナンスのため、サービスを停止しています。ログイン機能とデータベース連携を停止し、タスクはお使いのブラウザの localStorage にのみ保存されます。
+        </div>
+      </div>
       <main className="flex-grow container mx-auto px-4 py-6">
         {children}
       </main>
